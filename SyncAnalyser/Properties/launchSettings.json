@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "SyncAnalyser": {
+      "commandName": "Project",
+      "commandLineArgs": "local.sqlite"
+    }
+  }
+}
