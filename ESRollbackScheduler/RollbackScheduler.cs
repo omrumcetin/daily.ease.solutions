@@ -10,7 +10,7 @@ namespace ESRollbackScheduler
     {
         public static void Run()
         {
-            Console.WriteLine(AppConfig.OriginalValuesSqlitePath);
+            var OssJobs = Core.DbProxy.GetEnergySavingRollbackJob();
         }
     }
 }

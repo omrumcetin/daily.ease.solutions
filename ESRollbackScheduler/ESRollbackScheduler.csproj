@@ -98,7 +98,9 @@
     <None Include="Config\AppSettings.config">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="Config\ConnectionStrings.config" />
+    <None Include="Config\ConnectionStrings.config">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup />

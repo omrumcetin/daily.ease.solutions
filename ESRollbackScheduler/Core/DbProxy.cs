@@ -2,63 +2,92 @@
 using Serilog;
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+using System.Data.SQLite;
 
 namespace ESRollbackScheduler.Core
 {
     internal static class DbProxy
     {
-        public static void GetEnergySavingRollbackJob()
+        public static List<OssJob> GetEnergySavingRollbackJob()
         {
-            //OSS.JOBID,
-            //OSS.SCHEDULEDSTARTDATE,
-            //OSS.TARGETENDDATE,
-            //OSS.ACTUALSTARTDATE,
-            //OSS.ACTUALENDDATE,
-            //OSS.STATE,
-            //OSS.EXECUTIONGUID,
-            //U.ID USERID,
-            //U.NAME USERNAME,
-            //OSS.JOBDESCRIPTION,
-            //OSS.EXECUTIONPLANID,
-            //OSS.OPERATIONTYPE
+            Log.Debug("Getting energy saving rollbacking job from db.");
             using (var connection = new OracleConnection(AppConfig.OracleDbConnectionString))
-            using (var command = new OracleCommand(
-                         @"
-                        SELECT
-                            OSS.JOBID,
-                            OSS.SCHEDULEDSTARTDATE,
-                            OSS.TARGETENDDATE,
-                            OSS.ACTUALSTARTDATE,
-                            OSS.ACTUALENDDATE,
-                            OSS.STATE,
-                            OSS.EXECUTIONGUID,
-                            U.ID USERID,
-                            U.NAME USERNAME,
-                            OSS.JOBDESCRIPTION,
-                            OSS.EXECUTIONPLANID,
-                            OSS.OPERATIONTYPE
-                        FROM PISON_OSSSVC_JOB OSS
-                            LEFT JOIN USERV2_USERS U ON OSS.PISONUSERID = U.ID
-                            LEFT JOIN PISON_EXECUTION_PLAN EP ON EP.EXECUTIONPLANID = OSS.EXECUTIONPLANID
-                            LEFT JOIN PISON_OPTIMIZER PO ON PO.OPTIMIZERID = EP.OPTIMIZERID 
-                        WHERE
-                                SCHEDULEDSTARTDATE >= TRUNC(SYSDATE)
-                            AND SERVICETYPE IN ('3G Energy Saving', '4G Energy Saving')
-                            AND OPERATIONTYPE = 1",
-                        connection)
-            )
+                using (var command = new OracleCommand(
+                             @"
+                            SELECT
+                                OSS.JOBID,
+                                OSS.SCHEDULEDSTARTDATE,
+                                OSS.TARGETENDDATE,
+                                OSS.ACTUALSTARTDATE,
+                                OSS.ACTUALENDDATE,
+                                OSS.STATE,
+                                OSS.EXECUTIONGUID,
+                                U.ID USERID,
+                                U.NAME USERNAME,
+                                OSS.JOBDESCRIPTION,
+                                OSS.EXECUTIONPLANID,
+                                OSS.OPERATIONTYPE
+                            FROM PISON_OSSSVC_JOB OSS
+                                LEFT JOIN USERV2_USERS U ON OSS.PISONUSERID = U.ID
+                                LEFT JOIN PISON_EXECUTION_PLAN EP ON EP.EXECUTIONPLANID = OSS.EXECUTIONPLANID
+                                LEFT JOIN PISON_OPTIMIZER PO ON PO.OPTIMIZERID = EP.OPTIMIZERID 
+                            WHERE
+                                    SCHEDULEDSTARTDATE >= TRUNC(SYSDATE)
+                                AND OPERATIONTYPE = 1",
+                            connection)
+                )
             {
                 connection.Open();
-                //ReadOssJob(command, ossJob)
+                ReadOssJobQuery(command, out var ossJobs);
+                return ossJobs;
             }
         }
 
-        public static void GetCellsOriginalValues()
+        private static void ReadOssJobQuery(OracleCommand command, out List<OssJob> ossJobs)
         {
+            ossJobs = new List<OssJob>();
+            using (OracleDataReader reader = command.ExecuteReader())
+                while (reader.Read())
+                {
+                    OssJob job = new OssJob()
+                    {
+                        JobId = reader.GetInt32(0),
+                        ScheduledStartDate = reader.GetDateTime(1),
+                        TargetEndDate = reader.GetDateTime(2),
+                        ActualStartDate = reader.GetDateTime(3),
+                        ActualEndDate = reader.GetDateTime(4),
+                        State = reader.GetString(5),
+                        ExecutionGuid = new Guid(reader.GetString(6)),
+                        UserId = reader.GetString(7),
+                        UserName = reader.GetString(8),
+                        JobDescription = reader.GetString(9),
+                        ExecutionPlanId = reader.GetInt32(10),
+                        OperationType = reader.GetInt32(11)
+                    };
+                    ossJobs.Add(job);
+                }
+        }
 
+        public static void GetCellsOriginalValues(int ExecutionPlanId)
+        {
+            using (var connection = new SQLiteConnection(AppConfig.OriginalValuesSqlitePath))
+            {
+                using (var command = new SQLiteCommand(@"
+                            SELECT *
+                                FROM CellOriginalValues
+                              WHERE EXECUTIONPLANID = @executionplanid",
+                      connection))
+                {
+                    connection.Open();
+                    command.Parameters.AddWithValue("@executionplanid", ExecutionPlanId);
+                    ReadOriginalValueQuery(command, out var CellOriginalValue);
+                }
+            }
+        }
+
+        private static void ReadOriginalValueQuery(SQLiteCommand command, out object cellOriginalValue)
+        {
+            throw new NotImplementedException();
         }
 
         public static void CreateOssJob()
