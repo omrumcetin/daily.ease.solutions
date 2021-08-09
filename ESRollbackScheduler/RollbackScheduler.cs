@@ -10,7 +10,8 @@ namespace ESRollbackScheduler
     {
         public static void Run()
         {
-            var OssJobs = Core.DbProxy.GetEnergySavingRollbackJob();
+            var ossJobsCache = Core.DbProxy.GetEnergySavingRollbackJob();
+            var cellsOriginalValuesCache = Core.DbProxy.GetCellsOriginalValues();
         }
     }
 }

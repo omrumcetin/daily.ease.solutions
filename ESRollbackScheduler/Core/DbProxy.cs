@@ -1,4 +1,5 @@
-﻿using Oracle.ManagedDataAccess.Client;
+﻿using ESRollbackScheduler.Core.Db;
+using Oracle.ManagedDataAccess.Client;
 using Serilog;
 using System;
 using System.Collections.Generic;
@@ -91,26 +92,86 @@ namespace ESRollbackScheduler.Core
             };
         }
 
-        public static void GetCellsOriginalValues(int ExecutionPlanId)
+        public static List<CellOriginalValue> GetCellsOriginalValues()
         {
             using (var connection = new SQLiteConnection(AppConfig.OriginalValuesSqlitePath))
             {
-                using (var command = new SQLiteCommand(@"
+                using (var command = new SQLiteCommand($@"
                             SELECT *
-                                FROM CellOriginalValues
-                              WHERE EXECUTIONPLANID = @executionplanid",
+                                FROM {Constants.CellOriginalValueTableName}",
                       connection))
                 {
                     connection.Open();
-                    command.Parameters.AddWithValue("@executionplanid", ExecutionPlanId);
-                    ReadOriginalValueQuery(command, out var CellOriginalValue);
+                    //command.Parameters.AddWithValue("@executionplanid", ExecutionPlanId);
+                    ReadOriginalValueQuery(command, out List<CellOriginalValue> CellsOriginalValues);
+                    return CellsOriginalValues;
                 }
             }
         }
 
-        private static void ReadOriginalValueQuery(SQLiteCommand command, out object cellOriginalValue)
+        private static void ReadOriginalValueQuery(SQLiteCommand command, out List<CellOriginalValue> cellsOriginalValues)
         {
-            throw new NotImplementedException();
+            cellsOriginalValues = new List<CellOriginalValue>();
+            using (SQLiteDataReader reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    CellOriginalValue cellOriginalValue = ReadOriginalValue(reader);
+                    cellsOriginalValues.Add(cellOriginalValue);
+                }
+            }
+        }
+
+        private static CellOriginalValue ReadOriginalValue(SQLiteDataReader reader)
+        {
+            long piOssId = reader.GetInt32(0);
+            string piClid = null;
+            string radioTechnology = null;
+            switch (reader.GetInt32(1))
+            {
+                case 1:
+                    piClid = "320";
+                    radioTechnology = "2G";
+                    break;
+                case 2:
+                    piClid = "321";
+                    radioTechnology = "3G";
+                    break;
+                case 3:
+                    piClid = "322";
+                    radioTechnology = "4G";
+                    break;
+                default:
+                    break;
+            }
+            long piCellId = reader.GetInt64(2);
+            string moname = reader.GetString(3);
+            string parameterName = reader.GetString(4);
+            string parameterRealName = reader.GetString(5);
+            string parameterValue = reader.GetString(6);
+            string parameterRealValue = reader.GetString(7);
+            string parameterNewValue = reader.GetString(8);
+            string jobId = reader.GetString(10);
+            string executionPlanId = reader.GetString(11);
+            string optimizerId = reader.GetString(12);
+            string moduleName = reader.GetString(13);
+            return new CellOriginalValue
+            {
+                PIOssId = piOssId,
+                PIClid = piClid,
+                RadioTechnology = radioTechnology,
+                PICellId = piCellId,
+                Moname = moname,
+                ParameterName = parameterName,
+                ParameterRealValue = parameterRealValue,
+                ParameterValue = parameterValue,
+                ParameterRealName = parameterRealName,
+                ParameterNewValue = parameterNewValue,
+                JobId = jobId,
+                ExecutionPlanId = executionPlanId,
+                OptimizerId = optimizerId,
+                ModuleName = moduleName
+            };
         }
 
         public static void CreateOssJob()

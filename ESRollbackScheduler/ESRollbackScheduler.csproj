@@ -81,7 +81,9 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="AppConfig.cs" />
+    <Compile Include="Core\Constants.cs" />
     <Compile Include="Core\DbProxy.cs" />
+    <Compile Include="Core\Db\CellOriginalValue.cs" />
     <Compile Include="Core\OssJob.cs" />
     <Compile Include="ESRollbackSchedulerService.cs">
       <SubType>Component</SubType>
