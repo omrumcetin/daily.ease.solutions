@@ -3,6 +3,7 @@ using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Data.SQLite;
+using System.Linq;
 
 namespace ESRollbackScheduler.Core
 {
@@ -33,12 +34,17 @@ namespace ESRollbackScheduler.Core
                                 LEFT JOIN PISON_OPTIMIZER PO ON PO.OPTIMIZERID = EP.OPTIMIZERID 
                             WHERE
                                     SCHEDULEDSTARTDATE >= TRUNC(SYSDATE)
+                                AND ACTUALENDDATE IS NOT NULL
+                                AND SERVICETYPE IN ('3G Energy Saving', '4G Energy Saving')
                                 AND OPERATIONTYPE = 1",
                             connection)
                 )
             {
                 connection.Open();
                 ReadOssJobQuery(command, out var ossJobs);
+                Log.Debug($@"Evaluating following execution plan ids : {string.Join(",", ossJobs.Select(x => x.ExecutionPlanId.ToString())
+                                                                                                                             .Distinct()
+                                                                                                                             .ToArray())}");
                 return ossJobs;
             }
         }
@@ -49,23 +55,40 @@ namespace ESRollbackScheduler.Core
             using (OracleDataReader reader = command.ExecuteReader())
                 while (reader.Read())
                 {
-                    OssJob job = new OssJob()
-                    {
-                        JobId = reader.GetInt32(0),
-                        ScheduledStartDate = reader.GetDateTime(1),
-                        TargetEndDate = reader.GetDateTime(2),
-                        ActualStartDate = reader.GetDateTime(3),
-                        ActualEndDate = reader.GetDateTime(4),
-                        State = reader.GetString(5),
-                        ExecutionGuid = new Guid(reader.GetString(6)),
-                        UserId = reader.GetString(7),
-                        UserName = reader.GetString(8),
-                        JobDescription = reader.GetString(9),
-                        ExecutionPlanId = reader.GetInt32(10),
-                        OperationType = reader.GetInt32(11)
-                    };
+                    OssJob job = ReadOssJob(reader);
                     ossJobs.Add(job);
                 }
+        }
+
+        private static OssJob ReadOssJob(OracleDataReader reader)
+        {
+            int jobId = reader.GetInt32(0);
+            DateTime scheduledStartDate = reader.GetDateTime(1);
+            DateTime targetEndDate = reader.GetDateTime(2);
+            DateTime actualStartDate = reader.GetDateTime(3);
+            DateTime actualEndDate = reader.GetDateTime(4);
+            string state = reader.GetString(5);
+            Guid executionGuid = reader.GetGuid(6);
+            string userId = reader.GetString(7);
+            string userName = reader.GetString(8);
+            string jobDescription = reader.GetString(9);
+            int executionPlanId = reader.GetInt32(10);
+            int operationType = reader.GetInt32(11);
+            return new OssJob()
+            {
+                JobId = jobId,
+                ScheduledStartDate = scheduledStartDate,
+                TargetEndDate = targetEndDate,
+                ActualStartDate = actualStartDate,
+                ActualEndDate = actualEndDate,
+                State = state,
+                ExecutionGuid = executionGuid,
+                UserId = userId,
+                UserName = userName,
+                JobDescription = jobDescription,
+                ExecutionPlanId = executionPlanId,
+                OperationType = operationType
+            };
         }
 
         public static void GetCellsOriginalValues(int ExecutionPlanId)
