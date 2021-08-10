@@ -10,9 +10,9 @@ namespace ESRollbackScheduler.Core
 {
     internal static class DbProxy
     {
-        public static List<OssJob> GetEnergySavingRollbackJob()
+        public static List<OssJob> GetEnergySavingOssRollbackJobs()
         {
-            Log.Debug("Getting energy saving rollbacking job from db.");
+            Log.Debug("Getting energy saving rollback job from db");
             using (var connection = new OracleConnection(AppConfig.OracleDbConnectionString))
                 using (var command = new OracleCommand(
                              @"
@@ -43,9 +43,9 @@ namespace ESRollbackScheduler.Core
             {
                 connection.Open();
                 ReadOssJobQuery(command, out var ossJobs);
-                Log.Debug($@"Evaluating following execution plan ids : {string.Join(",", ossJobs.Select(x => x.ExecutionPlanId.ToString())
-                                                                                                                             .Distinct()
-                                                                                                                             .ToArray())}");
+                Log.Debug($@"Retrieved jobs of following execution plan ids : {string.Join(",", ossJobs.Select(x => x.ExecutionPlanId.ToString())
+                                                                                                                                     .Distinct()
+                                                                                                                                     .ToArray())}");
                 return ossJobs;
             }
         }
@@ -94,10 +94,21 @@ namespace ESRollbackScheduler.Core
 
         public static List<CellOriginalValue> GetCellsOriginalValues()
         {
-            using (var connection = new SQLiteConnection(AppConfig.OriginalValuesSqlitePath))
+            using (var connection = new SQLiteConnection($"Data Source={AppConfig.OriginalValuesSqlitePath}"))
             {
                 using (var command = new SQLiteCommand($@"
-                            SELECT *
+                            SELECT PIOSSID,
+                                   RADIOTECHNOLOGY,
+                                   PICELLID,
+                                   MONAME,
+                                   PARAMETERNAME,
+                                   PARAMETERREALNAME,
+                                   PARAMETERVALUE,
+                                   PARAMETERREALVALUE,
+                                   PARAMETERNEWVALUE,
+                                   JOBID,
+                                   EXECUTIONPLANID,
+                                   MODULENAME
                                 FROM {Constants.CellOriginalValueTableName}",
                       connection))
                 {
@@ -150,11 +161,10 @@ namespace ESRollbackScheduler.Core
             string parameterRealName = reader.GetString(5);
             string parameterValue = reader.GetString(6);
             string parameterRealValue = reader.GetString(7);
-            string parameterNewValue = reader.GetString(8);
-            string jobId = reader.GetString(10);
-            string executionPlanId = reader.GetString(11);
-            string optimizerId = reader.GetString(12);
-            string moduleName = reader.GetString(13);
+            string parameterNewValue = !reader.IsDBNull(8) ? reader.GetString(8) : null;
+            string jobId = reader.GetString(9);
+            int executionPlanId = reader.GetInt32(10);
+            string moduleName = !reader.IsDBNull(8) ? reader.GetString(11) : null;
             return new CellOriginalValue
             {
                 PIOssId = piOssId,
@@ -169,13 +179,100 @@ namespace ESRollbackScheduler.Core
                 ParameterNewValue = parameterNewValue,
                 JobId = jobId,
                 ExecutionPlanId = executionPlanId,
-                OptimizerId = optimizerId,
                 ModuleName = moduleName
+            };
+        }
+
+        public static List<RollbackConfig> GetEnergySavingJobConfig()
+        {
+            Log.Debug("Getting energy saving rollback job from db");
+            using (var connection = new OracleConnection(AppConfig.OracleDbConnectionString))
+            using (var command = new OracleCommand(
+                         @"
+                            SELECT EXECUTIONPLANID,
+                                   DESCRIPTION,
+                                   MULTISCHEDULES
+                                FROM PISON_EXECUTION_PLAN
+                              WHERE NAME IN ('3G Energy Saving','4G Energy Saving')
+                                AND ISCLOSEDLOOP = 1
+                                AND ISACTIVE = 1",
+                        connection)
+            )
+            {
+                connection.Open();
+                ReadExecutionPlanQuery(command, out var rollbackConfigs);
+                return rollbackConfigs;
+            }
+        }
+
+        private static void ReadExecutionPlanQuery(OracleCommand command, out List<RollbackConfig> rollbackConfigs)
+        {
+            rollbackConfigs = new List<RollbackConfig>();
+            using (OracleDataReader reader = command.ExecuteReader())
+                while (reader.Read())
+                {
+                    RollbackConfig rollbackConfig = ReadRollbackConfig(reader);
+                    rollbackConfigs.Add(rollbackConfig);
+                }
+        }
+
+        private static RollbackConfig ReadRollbackConfig(OracleDataReader reader)
+        {
+            int executionPlanId = reader.GetInt32(0);
+            XmlParser.Parse(reader.GetOracleClob(2).Value, out var rollbackScheduleAttributes);
+            return new RollbackConfig
+            {
+                ExecutionPlanId = executionPlanId,
+                EndDateLocal = rollbackScheduleAttributes.Item1,
+                TimeZoneId = rollbackScheduleAttributes.Item2
             };
         }
 
         public static void CreateOssJob()
         {
+            //get from db
+            long osssrvjobid = reader.GetInt64(0);
+            
+            Log.Debug($"Started processing OSSSRVJOBID: {osssrvjobid}");
+            
+            long executionplanid = reader.GetInt64(1);
+            Guid guid = new Guid(reader.GetOracleBinary(2).Value);
+            DateTime dateTime = reader.GetDateTime(3);
+            long optimizerid = reader.GetInt64(4);
+            string jobname = null;
+            if (!reader.IsDBNull(5))
+            {
+                jobname = reader.GetString(5);
+            }
+            string jobdescription = null;
+            if (!reader.IsDBNull(6))
+            {
+                jobdescription = reader.GetString(6);
+            }
+            int operationType = reader.GetInt32(7);
+            bool isclosedloop = operationType == 1;
+            string optimizername = null;
+            if (!reader.IsDBNull(8))
+            {
+                optimizername = reader.GetString(8);
+            }
+            long? userid = null;
+            if (!reader.IsDBNull(9))
+            {
+                userid = new long?(reader.GetInt64(9));
+            }
+            string username = null;
+            if (!reader.IsDBNull(10))
+            {
+                username = reader.GetString(10);
+            }
+            DateTimeOffset scheduledstartdate = DateTime.Now;
+            DateTimeOffset targetenddate = scheduledstartdate.AddDays(1);
+
+            string versionString = Environment.OSVersion.VersionString;
+            string machineName = Environment.MachineName;
+            string authinfo = $@"{Environment.UserDomainName}\{Environment.UserName}";
+            string state = "Success";
             Log.Debug("Inserting commands to PISON_OSSSVC_JOB");
             string insertCommandQuery = @"INSERT /*+ APPEND PARALLEL(4)*/
                                                                            INTO pison_osssvc_job (jobid,
@@ -218,34 +315,34 @@ namespace ESRollbackScheduler.Core
                                                                                  :machinename,
                                                                                  :authinfo,
                                                                                  :operationtype)";
-            //try
-            //{
-            //    using (OracleCommand insertCommand = new OracleCommand(insertCommandQuery, connection))
-            //    {
-            //        //insertCommand.Parameters.Add(":jobid", osssrvjobid);
-            //        //insertCommand.Parameters.Add(":scheduledstartdate", scheduledstartdate.DateTime);
-            //        //insertCommand.Parameters.Add(":scheduledstartdateutc", scheduledstartdate.UtcDateTime);
-            //        //insertCommand.Parameters.Add(":targetenddate", targetenddate.DateTime);
-            //        //insertCommand.Parameters.Add(":targetenddateutc", targetenddate.UtcDateTime);
-            //        //insertCommand.Parameters.Add(":state", state);
-            //        //insertCommand.Parameters.Add(":script", OracleDbType.Clob).Value = string.Join(Environment.NewLine, scriptCommands.Select(o => o.ScriptLine));
-            //        //insertCommand.Parameters.Add(":scripttype", "script");
-            //        //insertCommand.Parameters.Add(":scriptcommandcount", scriptCommands.Sum(o => o.ChangesCount));
-            //        //insertCommand.Parameters.Add(":scriptcommandcompletecount", OracleDbType.Int64).Value = 0;
-            //        //insertCommand.Parameters.Add(":executionguid", guid.ToByteArray());
-            //        //insertCommand.Parameters.Add(":executionplanid", executionplanid);
-            //        //insertCommand.Parameters.Add(":jobname", jobname);
-            //        //insertCommand.Parameters.Add(":jobdescription", jobdescription);
-            //        //insertCommand.Parameters.Add(":userid", userid);
-            //        //insertCommand.Parameters.Add(":optimizername", optimizername);
-            //        //insertCommand.Parameters.Add(":machineos", versionString);
-            //        //insertCommand.Parameters.Add(":machinename", machineName);
-            //        //insertCommand.Parameters.Add(":authinfo", authinfo);
-            //        //insertCommand.Parameters.Add(":operationtype", operationType);
-            //        insertCommand.ExecuteNonQuery();
-            //    }
-            //    Log.Debug("Insert completed.");
-            //}
+            try
+            {
+                using (OracleCommand insertCommand = new OracleCommand(insertCommandQuery, connection))
+                {
+                    insertCommand.Parameters.Add(":jobid", osssrvjobid);
+                    insertCommand.Parameters.Add(":scheduledstartdate", scheduledstartdate.DateTime);
+                    insertCommand.Parameters.Add(":scheduledstartdateutc", scheduledstartdate.UtcDateTime);
+                    insertCommand.Parameters.Add(":targetenddate", targetenddate.DateTime);
+                    insertCommand.Parameters.Add(":targetenddateutc", targetenddate.UtcDateTime);
+                    insertCommand.Parameters.Add(":state", state);
+                    insertCommand.Parameters.Add(":script", OracleDbType.Clob).Value = string.Join(Environment.NewLine, scriptCommands.Select(o => o.ScriptLine));
+                    insertCommand.Parameters.Add(":scripttype", "script");
+                    insertCommand.Parameters.Add(":scriptcommandcount", scriptCommands.Sum(o => o.ChangesCount));
+                    insertCommand.Parameters.Add(":scriptcommandcompletecount", OracleDbType.Int64).Value = 0;
+                    insertCommand.Parameters.Add(":executionguid", guid.ToByteArray());
+                    insertCommand.Parameters.Add(":executionplanid", executionplanid);
+                    insertCommand.Parameters.Add(":jobname", jobname);
+                    insertCommand.Parameters.Add(":jobdescription", jobdescription);
+                    insertCommand.Parameters.Add(":userid", userid);
+                    insertCommand.Parameters.Add(":optimizername", optimizername);
+                    insertCommand.Parameters.Add(":machineos", versionString);
+                    insertCommand.Parameters.Add(":machinename", machineName);
+                    insertCommand.Parameters.Add(":authinfo", authinfo);
+                    insertCommand.Parameters.Add(":operationtype", operationType);
+                    insertCommand.ExecuteNonQuery();
+                }
+                Log.Debug("Insert completed.");
+            }
         }
     }
 }

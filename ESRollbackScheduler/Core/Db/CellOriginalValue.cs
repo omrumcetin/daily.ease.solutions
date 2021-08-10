@@ -18,13 +18,10 @@ namespace ESRollbackScheduler.Core.Db
         public string ParameterValue { get; set; }
         public string ParameterRealValue { get; set; }
         public string ParameterNewValue { get; set; }
-        //public DateTime CreationTime { get; set; }
         public string JobId { get; set; }
-        public string ExecutionPlanId { get; set; }
-        public string OptimizerId { get; set; }
+        public int ExecutionPlanId { get; set; }
         public string ModuleName { get; set; }
-        //public int? MoNotFoundCount { get; set; } = 0;
-
+        
         public override string ToString() => $"{nameof(CellOriginalValue)}: PICellId={PICellId}, ParameterRealName={ParameterRealName}";
     }
 }
