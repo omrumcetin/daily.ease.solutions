@@ -12,7 +12,7 @@ namespace ESRollbackScheduler.Core
     {
         public static List<OssJob> GetEnergySavingOssRollbackJobs()
         {
-            Log.Debug("Getting energy saving rollback job from db");
+            Log.Debug("Reading energy saving rollback jobs");
             using (var connection = new OracleConnection(AppConfig.OracleDbConnectionString))
                 using (var command = new OracleCommand(
                              @"
@@ -26,9 +26,12 @@ namespace ESRollbackScheduler.Core
                                 OSS.EXECUTIONGUID,
                                 U.ID USERID,
                                 U.NAME USERNAME,
+                                OSS.JOBNAME,
                                 OSS.JOBDESCRIPTION,
                                 OSS.EXECUTIONPLANID,
-                                OSS.OPERATIONTYPE
+                                OSS.OPERATIONTYPE,
+                                PO.OPTIMIZERID,
+                                PO.OPTIMIZERNAME
                             FROM PISON_OSSSVC_JOB OSS
                                 LEFT JOIN USERV2_USERS U ON OSS.PISONUSERID = U.ID
                                 LEFT JOIN PISON_EXECUTION_PLAN EP ON EP.EXECUTIONPLANID = OSS.EXECUTIONPLANID
@@ -43,9 +46,7 @@ namespace ESRollbackScheduler.Core
             {
                 connection.Open();
                 ReadOssJobQuery(command, out var ossJobs);
-                Log.Debug($@"Retrieved jobs of following execution plan ids : {string.Join(",", ossJobs.Select(x => x.ExecutionPlanId.ToString())
-                                                                                                                                     .Distinct()
-                                                                                                                                     .ToArray())}");
+                Log.Debug("Energy saving rollback jobs retrieved");
                 return ossJobs;
             }
         }
@@ -72,9 +73,12 @@ namespace ESRollbackScheduler.Core
             Guid executionGuid = reader.GetGuid(6);
             string userId = reader.GetString(7);
             string userName = reader.GetString(8);
-            string jobDescription = reader.GetString(9);
-            int executionPlanId = reader.GetInt32(10);
-            int operationType = reader.GetInt32(11);
+            string jobName = reader.GetString(9);
+            string jobDescription = reader.GetString(10);
+            int executionPlanId = reader.GetInt32(11);
+            int operationType = reader.GetInt32(12);
+            int optimizerId = reader.GetInt32(13);
+            string optimizerName = reader.GetString(14);
             return new OssJob()
             {
                 JobId = jobId,
@@ -86,9 +90,12 @@ namespace ESRollbackScheduler.Core
                 ExecutionGuid = executionGuid,
                 UserId = userId,
                 UserName = userName,
+                JobName = jobName,
                 JobDescription = jobDescription,
                 ExecutionPlanId = executionPlanId,
-                OperationType = operationType
+                OperationType = operationType,
+                OptimizerId = optimizerId,
+                OptimizerName = optimizerName
             };
         }
 
@@ -163,7 +170,7 @@ namespace ESRollbackScheduler.Core
             string parameterRealValue = reader.GetString(7);
             string parameterNewValue = !reader.IsDBNull(8) ? reader.GetString(8) : null;
             string jobId = reader.GetString(9);
-            int executionPlanId = reader.GetInt32(10);
+            int executionPlanId = int.Parse(reader.GetString(10));
             string moduleName = !reader.IsDBNull(8) ? reader.GetString(11) : null;
             return new CellOriginalValue
             {
@@ -185,7 +192,7 @@ namespace ESRollbackScheduler.Core
 
         public static List<RollbackConfig> GetEnergySavingJobConfig()
         {
-            Log.Debug("Getting energy saving rollback job from db");
+            Log.Debug("Rollback configuration retrieved");
             using (var connection = new OracleConnection(AppConfig.OracleDbConnectionString))
             using (var command = new OracleCommand(
                          @"
@@ -228,120 +235,128 @@ namespace ESRollbackScheduler.Core
             };
         }
 
-        public static void CreateOssJob()
+        public static void CreateOssJob(List<string> ScriptCommands, List<OssJob> ESOssJobs, int ExecutionPlanId)
         {
-            //get from db
-            long osssrvjobid = reader.GetInt64(0);
-            
-            Log.Debug($"Started processing OSSSRVJOBID: {osssrvjobid}");
-            
-            long executionplanid = reader.GetInt64(1);
-            Guid guid = new Guid(reader.GetOracleBinary(2).Value);
-            DateTime dateTime = reader.GetDateTime(3);
-            long optimizerid = reader.GetInt64(4);
-            string jobname = null;
-            if (!reader.IsDBNull(5))
+            long? osssrvjobid = null;
+            using (var connection = new OracleConnection(AppConfig.OracleDbConnectionString))
+            using (var command = new OracleCommand("SELECT PISON_OSSSRV_JOB_ID.NEXTVAL FROM DUAL", connection))
             {
-                jobname = reader.GetString(5);
+                connection.Open();
+                using (OracleDataReader reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        osssrvjobid = reader.GetInt32(0);
+                    }
+                }
+                if (osssrvjobid == null)
+                    Log.Error($"Cannot retrieve OssJobId for execution plan({ExecutionPlanId})");
             }
-            string jobdescription = null;
-            if (!reader.IsDBNull(6))
+            Log.Debug($"Inserting job {osssrvjobid} with the action count {ScriptCommands.Count}");
+            var lastEsOssJobForExecutionPlanId = ESOssJobs.Where(x => x.ExecutionPlanId == ExecutionPlanId)
+                                                          .OrderBy(o => o.ActualEndDate)
+                                                          .FirstOrDefault();
+            if (lastEsOssJobForExecutionPlanId == null)
             {
-                jobdescription = reader.GetString(6);
+                Log.Error($"Cannot retrieve latest job from OSS for execution plan({ExecutionPlanId})");
+                return;
             }
-            int operationType = reader.GetInt32(7);
+
+            long executionplanid = lastEsOssJobForExecutionPlanId.ExecutionPlanId;
+            Guid? guid = lastEsOssJobForExecutionPlanId.ExecutionGuid;
+            DateTime dateTime = DateTime.Now.Date;
+            long optimizerid = lastEsOssJobForExecutionPlanId.OptimizerId;
+            string jobname = lastEsOssJobForExecutionPlanId.JobName;
+            string jobdescription = lastEsOssJobForExecutionPlanId.JobDescription;
+            int operationType = lastEsOssJobForExecutionPlanId.OperationType;
             bool isclosedloop = operationType == 1;
-            string optimizername = null;
-            if (!reader.IsDBNull(8))
-            {
-                optimizername = reader.GetString(8);
-            }
-            long? userid = null;
-            if (!reader.IsDBNull(9))
-            {
-                userid = new long?(reader.GetInt64(9));
-            }
-            string username = null;
-            if (!reader.IsDBNull(10))
-            {
-                username = reader.GetString(10);
-            }
+            string optimizername = lastEsOssJobForExecutionPlanId.OptimizerName;
+            string userid = lastEsOssJobForExecutionPlanId.UserId;
+            string username = lastEsOssJobForExecutionPlanId.UserName;
             DateTimeOffset scheduledstartdate = DateTime.Now;
             DateTimeOffset targetenddate = scheduledstartdate.AddDays(1);
-
             string versionString = Environment.OSVersion.VersionString;
             string machineName = Environment.MachineName;
             string authinfo = $@"{Environment.UserDomainName}\{Environment.UserName}";
             string state = "Success";
             Log.Debug("Inserting commands to PISON_OSSSVC_JOB");
-            string insertCommandQuery = @"INSERT /*+ APPEND PARALLEL(4)*/
-                                                                           INTO pison_osssvc_job (jobid,
-                                                                                                  scheduledstartdate,
-                                                                                                  scheduledstartdateutc,
-                                                                                                  targetenddate,
-                                                                                                  targetenddateutc,
-                                                                                                  state,
-                                                                                                  script,
-                                                                                                  scripttype,
-                                                                                                  scriptcommandcount,
-                                                                                                  scriptcommandcompletecount,
-                                                                                                  executionguid,
-                                                                                                  executionplanid,
-                                                                                                  jobname,
-                                                                                                  jobdescription,
-                                                                                                  pisonuserid,
-                                                                                                  servicetype,
-                                                                                                  machineos,
-                                                                                                  machinename,
-                                                                                                  authinfo,
-                                                                                                  operationtype)
-                                                                         VALUES ( :jobid,
-                                                                                 :scheduledstartdate,
-                                                                                 :scheduledstartdateutc,
-                                                                                 :targetenddate,
-                                                                                 :targetenddateutc,
-                                                                                 :state,
-                                                                                 :script,
-                                                                                 :scripttype,
-                                                                                 :scriptcommandcount,
-                                                                                 :scriptcommandcompletecount,
-                                                                                 :executionguid,
-                                                                                 :executionplanid,
-                                                                                 :jobname,
-                                                                                 :jobdescription,
-                                                                                 :userid,
-                                                                                 :optimizername,
-                                                                                 :machineos,
-                                                                                 :machinename,
-                                                                                 :authinfo,
-                                                                                 :operationtype)";
-            try
+            using (var connection = new OracleConnection(AppConfig.OracleDbConnectionString))
+            using (var command = new OracleCommand("SELECT PISON_OSSSRV_JOB_ID.NEXTVAL FROM DUAL", connection))
             {
-                using (OracleCommand insertCommand = new OracleCommand(insertCommandQuery, connection))
+                connection.Open();
+                string insertCommandQuery = @"INSERT /*+ APPEND PARALLEL(4)*/
+                                                                               INTO pison_osssvc_job (jobid,
+                                                                                                      scheduledstartdate,
+                                                                                                      scheduledstartdateutc,
+                                                                                                      targetenddate,
+                                                                                                      targetenddateutc,
+                                                                                                      state,
+                                                                                                      script,
+                                                                                                      scripttype,
+                                                                                                      scriptcommandcount,
+                                                                                                      scriptcommandcompletecount,
+                                                                                                      executionguid,
+                                                                                                      executionplanid,
+                                                                                                      jobname,
+                                                                                                      jobdescription,
+                                                                                                      pisonuserid,
+                                                                                                      servicetype,
+                                                                                                      machineos,
+                                                                                                      machinename,
+                                                                                                      authinfo,
+                                                                                                      operationtype)
+                                                                             VALUES ( :jobid,
+                                                                                     :scheduledstartdate,
+                                                                                     :scheduledstartdateutc,
+                                                                                     :targetenddate,
+                                                                                     :targetenddateutc,
+                                                                                     :state,
+                                                                                     :script,
+                                                                                     :scripttype,
+                                                                                     :scriptcommandcount,
+                                                                                     :scriptcommandcompletecount,
+                                                                                     :executionguid,
+                                                                                     :executionplanid,
+                                                                                     :jobname,
+                                                                                     :jobdescription,
+                                                                                     :userid,
+                                                                                     :optimizername,
+                                                                                     :machineos,
+                                                                                     :machinename,
+                                                                                     :authinfo,
+                                                                                     :operationtype)";
+                try
                 {
-                    insertCommand.Parameters.Add(":jobid", osssrvjobid);
-                    insertCommand.Parameters.Add(":scheduledstartdate", scheduledstartdate.DateTime);
-                    insertCommand.Parameters.Add(":scheduledstartdateutc", scheduledstartdate.UtcDateTime);
-                    insertCommand.Parameters.Add(":targetenddate", targetenddate.DateTime);
-                    insertCommand.Parameters.Add(":targetenddateutc", targetenddate.UtcDateTime);
-                    insertCommand.Parameters.Add(":state", state);
-                    insertCommand.Parameters.Add(":script", OracleDbType.Clob).Value = string.Join(Environment.NewLine, scriptCommands.Select(o => o.ScriptLine));
-                    insertCommand.Parameters.Add(":scripttype", "script");
-                    insertCommand.Parameters.Add(":scriptcommandcount", scriptCommands.Sum(o => o.ChangesCount));
-                    insertCommand.Parameters.Add(":scriptcommandcompletecount", OracleDbType.Int64).Value = 0;
-                    insertCommand.Parameters.Add(":executionguid", guid.ToByteArray());
-                    insertCommand.Parameters.Add(":executionplanid", executionplanid);
-                    insertCommand.Parameters.Add(":jobname", jobname);
-                    insertCommand.Parameters.Add(":jobdescription", jobdescription);
-                    insertCommand.Parameters.Add(":userid", userid);
-                    insertCommand.Parameters.Add(":optimizername", optimizername);
-                    insertCommand.Parameters.Add(":machineos", versionString);
-                    insertCommand.Parameters.Add(":machinename", machineName);
-                    insertCommand.Parameters.Add(":authinfo", authinfo);
-                    insertCommand.Parameters.Add(":operationtype", operationType);
-                    insertCommand.ExecuteNonQuery();
+                    using (OracleCommand insertCommand = new OracleCommand(insertCommandQuery, connection))
+                    {
+                        insertCommand.Parameters.Add(":jobid", osssrvjobid);
+                        insertCommand.Parameters.Add(":scheduledstartdate", scheduledstartdate.DateTime);
+                        insertCommand.Parameters.Add(":scheduledstartdateutc", scheduledstartdate.UtcDateTime);
+                        insertCommand.Parameters.Add(":targetenddate", targetenddate.DateTime);
+                        insertCommand.Parameters.Add(":targetenddateutc", targetenddate.UtcDateTime);
+                        insertCommand.Parameters.Add(":state", state);
+                        insertCommand.Parameters.Add(":script", OracleDbType.Clob).Value = string.Join(Environment.NewLine, ScriptCommands);
+                        insertCommand.Parameters.Add(":scripttype", "script");
+                        insertCommand.Parameters.Add(":scriptcommandcount", ScriptCommands.Count);
+                        insertCommand.Parameters.Add(":scriptcommandcompletecount", OracleDbType.Int64).Value = 0;
+                        insertCommand.Parameters.Add(":executionguid", guid);
+                        insertCommand.Parameters.Add(":executionplanid", executionplanid);
+                        insertCommand.Parameters.Add(":jobname", jobname);
+                        insertCommand.Parameters.Add(":jobdescription", jobdescription);
+                        insertCommand.Parameters.Add(":userid", userid);
+                        insertCommand.Parameters.Add(":optimizername", optimizername);
+                        insertCommand.Parameters.Add(":machineos", versionString);
+                        insertCommand.Parameters.Add(":machinename", machineName);
+                        insertCommand.Parameters.Add(":authinfo", authinfo);
+                        insertCommand.Parameters.Add(":operationtype", operationType);
+                        insertCommand.ExecuteNonQuery();
+                    }
+                    Log.Debug("Insert completed");
                 }
-                Log.Debug("Insert completed.");
+                catch (Exception ex)
+                {
+                    Log.Error("Couldnt insert job for creation :" + Environment.NewLine + ex.ToString());
+                }
             }
         }
     }

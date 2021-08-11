@@ -23,7 +23,7 @@ namespace ESRollbackScheduler
 
         protected override void OnStart(string[] args)
         {
-            Log.Information("ES Rollback scheduler has been started");
+            Log.Information("ES Rollback scheduler service has been started!");
             Thread thread = new Thread(RollbackScheduler.Run) { IsBackground = true };
             thread.Start();
         }
@@ -35,7 +35,7 @@ namespace ESRollbackScheduler
 
         protected override void OnStop()
         {
-            Log.Information("ES Rollback scheduler has been stopped");
+            Log.Information("ES Rollback scheduler service has been stopped!");
         }
     }
 }

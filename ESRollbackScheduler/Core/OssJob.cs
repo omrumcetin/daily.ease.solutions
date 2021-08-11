@@ -13,8 +13,11 @@ namespace ESRollbackScheduler.Core
         public Guid? ExecutionGuid { get; set; }
         public string UserId { get; set;}
         public string UserName { get; set; }
+        public string JobName { get; set; }
         public string JobDescription { get; set; }
         public int ExecutionPlanId { get; set; }
         public int OperationType { get; set; }
+        public int OptimizerId { get; set; }
+        public string OptimizerName { get; set; }
     }
 }

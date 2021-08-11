@@ -25,7 +25,12 @@ namespace ESRollbackScheduler.Core
                     if (schedule.Id == "ForceRollback")
                     {
                         if(DateTime.TryParse(schedule.EndDateLocal, out var endDateLocal))
-                            RollbackSchedulePair = (endDateLocal, schedule.WindowsTimezoneId);
+                        {
+                            DateTime todaysDateLocal = DateTime.Today;
+                            todaysDateLocal = todaysDateLocal.AddHours(endDateLocal.Hour);
+                            todaysDateLocal = todaysDateLocal.AddMinutes(endDateLocal.Minute);
+                            RollbackSchedulePair = (todaysDateLocal, schedule.WindowsTimezoneId);
+                        }
                     }
                 }
             }

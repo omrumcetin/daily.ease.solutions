@@ -18,5 +18,10 @@ namespace ESRollbackScheduler
         {
             get { return ConfigurationManager.AppSettings["OriginalValuesSqlitePath"].ToString(); }
         }
+
+        public static int ServiceSleepInMinutes
+        {
+            get { return int.Parse(ConfigurationManager.AppSettings["ServiceSleepInMinutes"]); }
+        }
     }
 }
